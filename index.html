@@ -361,7 +361,7 @@ function tryPushBlock(room, bx, by, dx, dy) {
     for (let yy = 0; yy < ROWS; yy++) {
       for (let xx = 0; xx < COLS; xx++) {
         if (grid[yy][xx] === T.LOCKED_DOOR) {
-          grid[yy][xx] = T.DOOR;
+          grid[yy][xx] = getFloorType(room);
           // Add a door connection if needed
           // Check if door connection already exists
           const existingDoor = doors[room]?.find(d => d.x === xx && d.y === yy);
@@ -454,7 +454,7 @@ function update() {
   if (grid[ny]?.[nx] === T.LOCKED_DOOR) {
     if (state.keys[room] && state.keys[room] > 0) {
       state.keys[room]--;
-      grid[ny][nx] = T.DOOR;
+      grid[ny][nx] = getFloorType(room);
       showMessage('Used a key! Door unlocked! 🔓');
       moveCooldown = MOVE_DELAY;
       return;
