@@ -135,7 +135,7 @@ const C = {
 const T = {
   FLOOR: 0, WALL: 1, DOOR: 2, ITEM: 3, BLOCK: 4, SWITCH: 5,
   KEY: 6, COUNTER: 7, LOCKED_DOOR: 8, WATER: 9, GRASS: 10,
-  DIRT: 11, STONE: 12, WOOD: 13, CARPET: 14, CHEST: 15,
+  DIRT: 11, STONE: 12, WOOD: 13, CARPET: 14, CHEST: 15, TABLE: 16,
 };
 
 // ── Kitchen items to collect ──
@@ -169,7 +169,7 @@ function createKitchen() {
   // Kitchen counter (return items here)
   for (let x = 3; x <= 8; x++) { g[2][x] = T.COUNTER; }
   // Table
-  for (let x = 10; x <= 13; x++) { g[7][x] = T.WOOD; g[8][x] = T.WOOD; }
+  for (let x = 10; x <= 13; x++) { g[7][x] = T.TABLE; g[8][x] = T.TABLE; }
   // Some decor walls
   for (let y = 3; y <= 5; y++) g[y][14] = T.WALL;
   // Doors
@@ -246,7 +246,7 @@ function createDining() {
   const g = makeGrid(T.FLOOR);
   addWalls(g);
   // Big table
-  for (let y = 4; y <= 9; y++) for (let x = 7; x <= 12; x++) g[y][x] = T.WOOD;
+  for (let y = 4; y <= 9; y++) for (let x = 7; x <= 12; x++) g[y][x] = T.TABLE;
   // Carpet under table area
   for (let y = 3; y <= 10; y++) for (let x = 6; x <= 13; x++) {
     if (g[y][x] === T.FLOOR) g[y][x] = T.CARPET;
@@ -338,7 +338,7 @@ function isSolid(room, x, y) {
   if (x < 0 || x >= COLS || y < 0 || y >= ROWS) return true;
   const tile = rooms[room].grid[y][x];
   return tile === T.WALL || tile === T.COUNTER || tile === T.WATER ||
-         tile === T.LOCKED_DOOR || tile === T.WOOD;
+         tile === T.LOCKED_DOOR || tile === T.TABLE;
 }
 
 function tryPushBlock(room, bx, by, dx, dy) {
@@ -640,6 +640,14 @@ function drawTile(x, y, tile, room) {
       ctx.fillRect(px, py, TILE, TILE);
       ctx.fillStyle = 'rgba(0,0,0,0.1)';
       for (let i = 0; i < TILE; i += 6) ctx.fillRect(px, py+i, TILE, 1);
+      break;
+    case T.TABLE:
+      ctx.fillStyle = '#8B5E3C';
+      ctx.fillRect(px, py, TILE, TILE);
+      ctx.fillStyle = 'rgba(0,0,0,0.15)';
+      for (let i = 0; i < TILE; i += 6) ctx.fillRect(px, py+i, TILE, 1);
+      ctx.fillStyle = 'rgba(255,255,255,0.1)';
+      ctx.fillRect(px+2, py+2, TILE-4, 2);
       break;
     case T.CARPET:
       ctx.fillStyle = C.carpet;
