@@ -208,21 +208,23 @@ function createPantry() {
   // Side-scrolling platformer room! FLOOR = air, WALL = solid
   const g = makeGrid(T.FLOOR);
   addWalls(g);
-  // Extra floor thickness at bottom
+  // Solid floor at bottom
   for (let x = 1; x < COLS-1; x++) g[ROWS-2][x] = T.WALL;
-  // Platforms - staggered for climbing
-  for (let x = 3; x <= 6; x++) g[11][x] = T.WALL;
-  for (let x = 13; x <= 16; x++) g[11][x] = T.WALL;
-  for (let x = 8; x <= 11; x++) g[9][x] = T.WALL;
-  for (let x = 2; x <= 5; x++) g[7][x] = T.WALL;
-  for (let x = 14; x <= 17; x++) g[7][x] = T.WALL;
-  for (let x = 8; x <= 12; x++) g[5][x] = T.WALL;
-  for (let x = 4; x <= 7; x++) g[3][x] = T.WALL;
-  for (let x = 9; x <= 11; x++) g[3][x] = T.WALL;
-  // Item on top platform
-  // (placed by KITCHEN_ITEMS forEach)
-  // Exit door at bottom
-  g[ROWS-2][2] = T.DOOR;
+  // Platforms - zigzag pattern, each reachable with a jump (2-3 tiles up)
+  // Level 1: low platforms on left and right
+  for (let x = 2; x <= 6; x++) g[11][x] = T.WALL;
+  for (let x = 13; x <= 17; x++) g[11][x] = T.WALL;
+  // Level 2: center
+  for (let x = 7; x <= 12; x++) g[9][x] = T.WALL;
+  // Level 3: left and right
+  for (let x = 2; x <= 6; x++) g[7][x] = T.WALL;
+  for (let x = 14; x <= 18; x++) g[7][x] = T.WALL;
+  // Level 4: center
+  for (let x = 7; x <= 12; x++) g[5][x] = T.WALL;
+  // Level 5: top platform with the item
+  for (let x = 8; x <= 12; x++) g[3][x] = T.WALL;
+  // Exit door on left wall (not on floor, so gravity won't push you out)
+  g[ROWS-3][0] = T.DOOR;
   return g;
 }
 
@@ -312,7 +314,7 @@ const doors = {
     { x: 10, y: 0, to: 'kitchen', tx: 10, ty: ROWS-2 },
     { x: 5, y: ROWS-1, to: 'pantry', tx: -1, ty: -1 },
   ],
-  pantry:   [{ x: 2, y: ROWS-2, to: 'garden', tx: 5, ty: ROWS-2 }],
+  pantry:   [{ x: 0, y: ROWS-3, to: 'garden', tx: 5, ty: ROWS-2 }],
   basement: [{ x: COLS-1, y: 7, to: 'kitchen', tx: 1, ty: 7 }],
   attic:    [{ x: 10, y: ROWS-1, to: 'kitchen', tx: 10, ty: 1 }],
   dining:   [{ x: 0, y: 7, to: 'kitchen', tx: COLS-2, ty: 7 }],
@@ -347,8 +349,9 @@ var plat = {
   facing: 1,         // 1=right, -1=left
   PW: 18, PH: 24,   // player hitbox
   GRAVITY: 0.55,
-  JUMP_VEL: -9.5,
+  JUMP_VEL: -10,
   SPEED: 3,
+  jumpPressed: false, // track if jump key was already held
 };
 
 // ── Place kitchen items on their room grids ──
@@ -938,14 +941,16 @@ function platBoxCollides(px, py) {
 
 function enterPlatformer() {
   plat.active = true;
-  plat.px = 2 * TILE + 6;
-  plat.py = (ROWS - 3) * TILE;
+  // Start on the floor near the left wall
+  plat.px = 1 * TILE + 4;
+  plat.py = (ROWS - 3) * TILE - plat.PH;
   plat.vx = 0;
   plat.vy = 0;
-  plat.grounded = false;
+  plat.grounded = true;
   plat.facing = 1;
+  plat.jumpPressed = true; // prevent immediate jump if space held
   state.room = 'pantry';
-  showMessage('Side-scroll mode! Use arrows to move, Space to jump!', 150);
+  showMessage('Side-scroll mode! Arrows to move, Space to jump! Exit is on the left wall.', 180);
 }
 
 function exitPlatformer() {
@@ -967,10 +972,15 @@ function updatePlatformer() {
   if (keys['ArrowLeft'] || keys['a'] || keys['A']) { p.vx = -p.SPEED; p.facing = -1; }
   if (keys['ArrowRight'] || keys['d'] || keys['D']) { p.vx = p.SPEED; p.facing = 1; }
 
-  // Jump
-  if ((keys[' '] || keys['ArrowUp'] || keys['w'] || keys['W']) && p.grounded) {
+  // Jump — require key release before jumping again
+  var jumpKeyDown = !!(keys[' '] || keys['ArrowUp'] || keys['w'] || keys['W']);
+  if (jumpKeyDown && p.grounded && !p.jumpPressed) {
     p.vy = p.JUMP_VEL;
     p.grounded = false;
+    p.jumpPressed = true;
+  }
+  if (!jumpKeyDown) {
+    p.jumpPressed = false;
   }
 
   // Gravity
@@ -1018,10 +1028,10 @@ function updatePlatformer() {
     }
   }
 
-  // Check door exit
-  var doorTileX = Math.floor((p.px + p.PW / 2) / TILE);
-  var doorTileY = Math.floor((p.py + p.PH - 1) / TILE);
-  if (grid[doorTileY] && grid[doorTileY][doorTileX] === T.DOOR) {
+  // Check door exit — check left edge of player against door tile
+  var doorCheckX = Math.floor(p.px / TILE);
+  var doorCheckY = Math.floor((p.py + p.PH / 2) / TILE);
+  if (doorCheckX <= 0 && grid[doorCheckY] && grid[doorCheckY][0] === T.DOOR) {
     exitPlatformer();
   }
 }
