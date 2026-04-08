@@ -87,7 +87,7 @@ canvas {
 <body>
 <div id="ui">
   <span id="room-name">Kitchen</span>
-  <span id="item-count">Items: 0/6</span>
+  <span id="item-count">Items: 0/7</span>
 </div>
 <canvas id="game" width="640" height="480"></canvas>
 <div id="inventory-bar"><span>Inventory: (empty)</span></div>
@@ -146,6 +146,7 @@ const KITCHEN_ITEMS = [
   { name: 'Whisk', icon: '🥄', room: 'dining', x: 14, y: 7 },
   { name: 'Ladle', icon: '🥣', room: 'garden', x: 3, y: 11 },
   { name: 'Rolling Pin', icon: '📌', room: 'basement', x: 15, y: 4 },
+  { name: 'Pot', icon: '🍲', room: 'pantry', x: 10, y: 2 },
 ];
 
 // ── Room definitions ──
@@ -198,6 +199,30 @@ function createGarden() {
   g[11][16] = T.WALL;
   // Door back to kitchen (north)
   g[0][10] = T.DOOR;
+  // Secret door to pantry (south wall, west side)
+  g[ROWS-1][5] = T.DOOR;
+  return g;
+}
+
+function createPantry() {
+  // Side-scrolling platformer room! FLOOR = air, WALL = solid
+  const g = makeGrid(T.FLOOR);
+  addWalls(g);
+  // Extra floor thickness at bottom
+  for (let x = 1; x < COLS-1; x++) g[ROWS-2][x] = T.WALL;
+  // Platforms - staggered for climbing
+  for (let x = 3; x <= 6; x++) g[11][x] = T.WALL;
+  for (let x = 13; x <= 16; x++) g[11][x] = T.WALL;
+  for (let x = 8; x <= 11; x++) g[9][x] = T.WALL;
+  for (let x = 2; x <= 5; x++) g[7][x] = T.WALL;
+  for (let x = 14; x <= 17; x++) g[7][x] = T.WALL;
+  for (let x = 8; x <= 12; x++) g[5][x] = T.WALL;
+  for (let x = 4; x <= 7; x++) g[3][x] = T.WALL;
+  for (let x = 9; x <= 11; x++) g[3][x] = T.WALL;
+  // Item on top platform
+  // (placed by KITCHEN_ITEMS forEach)
+  // Exit door at bottom
+  g[ROWS-2][2] = T.DOOR;
   return g;
 }
 
@@ -272,6 +297,7 @@ const rooms = {
   basement:  { grid: createBasement(), name: 'Basement' },
   attic:     { grid: createAttic(),    name: 'Attic' },
   dining:    { grid: createDining(),   name: 'Dining Room' },
+  pantry:    { grid: createPantry(),  name: 'Pantry (Side-scroll!)' },
 };
 
 // ── Door connections ──
@@ -282,7 +308,11 @@ const doors = {
     { x: COLS-1, y: 7,  to: 'dining',    tx: 1, ty: 7 },
     { x: 10, y: 0,      to: 'attic',     tx: 10, ty: ROWS-2 },
   ],
-  garden:   [{ x: 10, y: 0, to: 'kitchen', tx: 10, ty: ROWS-2 }],
+  garden:   [
+    { x: 10, y: 0, to: 'kitchen', tx: 10, ty: ROWS-2 },
+    { x: 5, y: ROWS-1, to: 'pantry', tx: -1, ty: -1 },
+  ],
+  pantry:   [{ x: 2, y: ROWS-2, to: 'garden', tx: 5, ty: ROWS-2 }],
   basement: [{ x: COLS-1, y: 7, to: 'kitchen', tx: 1, ty: 7 }],
   attic:    [{ x: 10, y: ROWS-1, to: 'kitchen', tx: 10, ty: 1 }],
   dining:   [{ x: 0, y: 7, to: 'kitchen', tx: COLS-2, ty: 7 }],
@@ -306,6 +336,19 @@ const state = {
   jumping: false,
   jumpTimer: 0,
   jumpCooldown: 0,
+};
+
+// ── Platformer state (for pantry room) ──
+var plat = {
+  active: false,
+  px: 0, py: 0,     // pixel position (top-left of player)
+  vx: 0, vy: 0,     // velocity
+  grounded: false,
+  facing: 1,         // 1=right, -1=left
+  PW: 18, PH: 24,   // player hitbox
+  GRAVITY: 0.55,
+  JUMP_VEL: -9.5,
+  SPEED: 3,
 };
 
 // ── Place kitchen items on their room grids ──
@@ -474,6 +517,12 @@ function update() {
   // Check door transitions
   const doorConn = doors[room]?.find(d => d.x === nx && d.y === ny);
   if (doorConn && grid[ny][nx] === T.DOOR) {
+    // Special: entering the platformer room
+    if (doorConn.to === 'pantry') {
+      enterPlatformer();
+      moveCooldown = MOVE_DELAY + 5;
+      return;
+    }
     state.room = doorConn.to;
     state.px = doorConn.tx;
     state.py = doorConn.ty;
@@ -838,6 +887,12 @@ function drawWinScreen() {
 function render() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+  if (plat.active) {
+    renderPlatformer();
+    drawHUD();
+    return;
+  }
+
   const room = state.room;
   const grid = rooms[room].grid;
 
@@ -858,15 +913,224 @@ function render() {
   drawHUD();
 }
 
+// ══════════════════════════════════════
+// ── PLATFORMER ENGINE (Pantry room) ──
+// ══════════════════════════════════════
+
+function platSolid(gx, gy) {
+  if (gx < 0 || gx >= COLS || gy < 0 || gy >= ROWS) return true;
+  var t = rooms.pantry.grid[gy][gx];
+  return t === T.WALL;
+}
+
+function platBoxCollides(px, py) {
+  var left = Math.floor(px / TILE);
+  var right = Math.floor((px + plat.PW - 1) / TILE);
+  var top = Math.floor(py / TILE);
+  var bottom = Math.floor((py + plat.PH - 1) / TILE);
+  for (var ty = top; ty <= bottom; ty++) {
+    for (var tx = left; tx <= right; tx++) {
+      if (platSolid(tx, ty)) return true;
+    }
+  }
+  return false;
+}
+
+function enterPlatformer() {
+  plat.active = true;
+  plat.px = 2 * TILE + 6;
+  plat.py = (ROWS - 3) * TILE;
+  plat.vx = 0;
+  plat.vy = 0;
+  plat.grounded = false;
+  plat.facing = 1;
+  state.room = 'pantry';
+  showMessage('Side-scroll mode! Use arrows to move, Space to jump!', 150);
+}
+
+function exitPlatformer() {
+  plat.active = false;
+  state.room = 'garden';
+  state.px = 5;
+  state.py = ROWS - 2;
+  showMessage('Back to the garden!', 60);
+}
+
+function updatePlatformer() {
+  state.animFrame++;
+  if (state.messageTimer > 0) state.messageTimer--;
+
+  var p = plat;
+
+  // Input
+  p.vx = 0;
+  if (keys['ArrowLeft'] || keys['a'] || keys['A']) { p.vx = -p.SPEED; p.facing = -1; }
+  if (keys['ArrowRight'] || keys['d'] || keys['D']) { p.vx = p.SPEED; p.facing = 1; }
+
+  // Jump
+  if ((keys[' '] || keys['ArrowUp'] || keys['w'] || keys['W']) && p.grounded) {
+    p.vy = p.JUMP_VEL;
+    p.grounded = false;
+  }
+
+  // Gravity
+  p.vy += p.GRAVITY;
+  if (p.vy > 10) p.vy = 10;
+
+  // Move X
+  var newX = p.px + p.vx;
+  if (!platBoxCollides(newX, p.py)) {
+    p.px = newX;
+  }
+
+  // Move Y
+  var newY = p.py + p.vy;
+  if (!platBoxCollides(p.px, newY)) {
+    p.py = newY;
+    p.grounded = false;
+  } else {
+    // Resolve collision
+    if (p.vy > 0) {
+      // Falling - snap to top of tile
+      p.py = Math.floor((p.py + p.PH) / TILE) * TILE - p.PH;
+      p.grounded = true;
+    } else {
+      // Hit ceiling - snap below
+      p.py = Math.floor(p.py / TILE) * TILE + TILE;
+    }
+    p.vy = 0;
+  }
+
+  // Check item pickup
+  var cx = Math.floor((p.px + p.PW / 2) / TILE);
+  var cy = Math.floor((p.py + p.PH / 2) / TILE);
+  var grid = rooms.pantry.grid;
+  if (cy >= 0 && cy < ROWS && cx >= 0 && cx < COLS && grid[cy][cx] === T.ITEM) {
+    for (var i = 0; i < KITCHEN_ITEMS.length; i++) {
+      var it = KITCHEN_ITEMS[i];
+      if (it.room === 'pantry' && it.x === cx && it.y === cy && !it.collected) {
+        it.collected = true;
+        state.inventory.push(it);
+        grid[cy][cx] = T.FLOOR;
+        showMessage('Found the ' + it.name + '! ' + it.icon + ' Now get back to the kitchen!');
+        break;
+      }
+    }
+  }
+
+  // Check door exit
+  var doorTileX = Math.floor((p.px + p.PW / 2) / TILE);
+  var doorTileY = Math.floor((p.py + p.PH - 1) / TILE);
+  if (grid[doorTileY] && grid[doorTileY][doorTileX] === T.DOOR) {
+    exitPlatformer();
+  }
+}
+
+function renderPlatformer() {
+  var grid = rooms.pantry.grid;
+
+  // Dark background
+  ctx.fillStyle = '#0d1117';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Draw tiles
+  for (var y = 0; y < ROWS; y++) {
+    for (var x = 0; x < COLS; x++) {
+      var t = grid[y][x];
+      var px = x * TILE, py = y * TILE;
+
+      if (t === T.WALL) {
+        // Brick-style platforms
+        ctx.fillStyle = '#4a3728';
+        ctx.fillRect(px, py, TILE, TILE);
+        ctx.fillStyle = '#5c4033';
+        ctx.fillRect(px + 1, py + 1, TILE/2 - 2, TILE/2 - 2);
+        ctx.fillRect(px + TILE/2 + 1, py + 1, TILE/2 - 2, TILE/2 - 2);
+        ctx.fillRect(px + 1, py + TILE/2 + 1, TILE/2 - 2, TILE/2 - 2);
+        ctx.fillRect(px + TILE/2 + 1, py + TILE/2 + 1, TILE/2 - 2, TILE/2 - 2);
+        ctx.fillStyle = 'rgba(255,255,255,0.08)';
+        ctx.fillRect(px, py, TILE, 2);
+      } else if (t === T.DOOR) {
+        ctx.fillStyle = '#2d6a4f';
+        ctx.fillRect(px, py, TILE, TILE);
+        ctx.fillStyle = '#40916c';
+        ctx.fillRect(px + 4, py + 4, TILE - 8, TILE - 8);
+        ctx.fillStyle = '#ffd700';
+        ctx.fillRect(px + TILE - 10, py + TILE/2 - 2, 4, 4);
+        // "EXIT" label
+        ctx.fillStyle = '#fff';
+        ctx.font = '8px "Courier New"';
+        ctx.fillText('EXIT', px + 3, py + TILE - 4);
+      } else if (t === T.ITEM) {
+        // Glowing item
+        var glow = Math.sin(state.animFrame * 0.1) * 0.3 + 0.7;
+        ctx.fillStyle = 'rgba(255,209,102,' + (glow * 0.3) + ')';
+        ctx.fillRect(px - 2, py - 2, TILE + 4, TILE + 4);
+        ctx.fillStyle = C.item;
+        ctx.fillRect(px + 6, py + 6, TILE - 12, TILE - 12);
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(px + 10, py + 8, 4, 4);
+        // sparkle
+        var sx = px + 4 + Math.sin(state.animFrame * 0.15) * 3;
+        var sy = py + 4 + Math.cos(state.animFrame * 0.15) * 3;
+        ctx.fillRect(sx, sy, 2, 2);
+      } else {
+        // Background - subtle grid for depth
+        if ((x + y) % 3 === 0) {
+          ctx.fillStyle = 'rgba(255,255,255,0.015)';
+          ctx.fillRect(px, py, TILE, TILE);
+        }
+      }
+    }
+  }
+
+  // "SIDE-SCROLL" indicator
+  ctx.fillStyle = 'rgba(255,255,255,0.15)';
+  ctx.font = '10px "Courier New"';
+  ctx.fillText('◀ SIDE-SCROLL MODE ▶', 240, 16);
+
+  // Draw player
+  var p = plat;
+  // Shadow on nearest platform below
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  ctx.fillRect(p.px - 1, p.py + p.PH, p.PW + 2, 3);
+
+  // Body
+  ctx.fillStyle = C.player;
+  ctx.fillRect(p.px, p.py + 6, p.PW, p.PH - 6);
+
+  // Head
+  ctx.fillStyle = '#f4d03f';
+  ctx.fillRect(p.px + 1, p.py, p.PW - 2, 10);
+
+  // Eyes
+  ctx.fillStyle = '#000';
+  if (p.facing > 0) {
+    ctx.fillRect(p.px + p.PW - 6, p.py + 4, 3, 3);
+  } else {
+    ctx.fillRect(p.px + 3, p.py + 4, 3, 3);
+  }
+
+  // Chef hat
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(p.px - 1, p.py - 4, p.PW + 2, 6);
+  ctx.fillRect(p.px + 2, p.py - 8, p.PW - 4, 6);
+  ctx.fillRect(p.px + 4, p.py - 10, p.PW - 8, 4);
+}
+
 // ── Game loop ──
 function gameLoop() {
-  update();
+  if (plat.active) {
+    updatePlatformer();
+  } else {
+    update();
+  }
   render();
   requestAnimationFrame(gameLoop);
 }
 
 // Start message
-showMessage('Welcome to Kitchen Quest! Find all 6 kitchen items and return them to the counter!', 180);
+showMessage('Welcome to Kitchen Quest! Find all 7 kitchen items and return them to the counter!', 180);
 try { gameLoop(); } catch(e) { document.getElementById('message').textContent = 'Error: ' + e.message; }
 </script>
 </body>
